@@ -177,7 +177,7 @@ def show_help_full():
 
   {creds}
     Stored in cms_downloader_settings.json next to script.
-    Change via --settings > Modify credentials.
+    Change via --settings > Manage credential storage.
 
   {cli}
     python cms_downloader.py all
@@ -215,6 +215,7 @@ def show_help_full():
 
 FACTORY_SETTINGS = {
     "show_defaults": True,
+    "show_tips": True,
     "default_download_path": "D:\\Downloads\\GIU_CMS_Downloads",
     "default_skip_existing": True,
     "default_courses": "all",
@@ -306,6 +307,11 @@ def _decode_saved_password(encoded):
         return base64.b64decode(encoded.encode("ascii")).decode("utf-8")
     except Exception:
         return ""
+
+def _mask_password(password):
+    if not password:
+        return "(none)"
+    return "*" * min(12, max(6, len(password)))
 
 def saved_credentials_enabled():
     return bool(SETTINGS.get("credential_storage", {}).get("save_credentials"))
@@ -399,18 +405,25 @@ def show_settings():
 
     def manage_credentials():
         storage = temp.setdefault("credential_storage", _deep_copy(FACTORY_SETTINGS["credential_storage"]))
+        show_password = False
         while True:
             clear_screen()
             print(c("  Credential Storage\n", C.CYAN))
             enabled = c("ON", C.GREEN) if storage.get("save_credentials") else c("OFF", C.YELLOW)
             username = storage.get("username") or "(none)"
-            saved = c("yes", C.GREEN) if storage.get("username") and storage.get("password_b64") else c("no", C.YELLOW)
+            saved_password = _decode_saved_password(storage.get("password_b64", ""))
+            password_label = saved_password if show_password else _mask_password(saved_password)
+            saved = c("yes", C.GREEN) if storage.get("username") and saved_password else c("no", C.YELLOW)
             print(f"  1) Save credentials locally : {enabled}")
-            print(f"  2) Saved username           : {c(username, C.YELLOW)}")
-            print(f"  3) Saved password present   : {saved}")
-            print("  4) Update saved credentials")
-            print("  5) Clear saved credentials")
-            print("  6) Back")
+            visibility = "visible" if show_password else "hidden"
+            print(f"  2) Update username          : {c(username, C.YELLOW)}")
+            print(f"  3) Saved password ({visibility}) : {c(password_label, C.YELLOW)}")
+            print(f"  4) Password saved           : {saved}")
+            print("  5) Update password")
+            print("  6) Update both")
+            print("  7) Show/hide password")
+            print("  8) Clear saved credentials")
+            print("  9) Back")
             print(c("\n  Note: saved credentials are base64-obfuscated, not encrypted.", C.DIM))
             ch = input("\n  >> ").strip()
             if ch == "1":
@@ -420,10 +433,12 @@ def show_settings():
             elif ch == "2":
                 u = input("  Username (Enter to keep): ").strip()
                 if u: storage["username"] = u
-            elif ch == "4":
-                u = input("  Username: ").strip()
-                if not u:
-                    print(c("  Username is required.", C.RED)); time.sleep(1); continue
+            elif ch == "5":
+                if not storage.get("username"):
+                    u = input("  Username required first: ").strip()
+                    if not u:
+                        print(c("  Username is required before saving a password.", C.RED)); time.sleep(1); continue
+                    storage["username"] = u
                 try:
                     p = getpass.getpass("  Password: ").strip()
                 except Exception:
@@ -431,11 +446,29 @@ def show_settings():
                 if not p:
                     print(c("  Password is required.", C.RED)); time.sleep(1); continue
                 storage["save_credentials"] = True
-                storage["username"] = u
                 storage["password_b64"] = _encode_saved_password(p)
-            elif ch == "5":
-                clear_saved_credentials(temp)
             elif ch == "6":
+                current_user = storage.get("username", "")
+                prompt = f"  Username (Enter to keep '{current_user}'): " if current_user else "  Username: "
+                u = input(prompt).strip()
+                if u:
+                    storage["username"] = u
+                elif not current_user:
+                    print(c("  Username is required.", C.RED)); time.sleep(1); continue
+                try:
+                    p = getpass.getpass("  Password (Enter to keep current): ").strip()
+                except Exception:
+                    p = input("  Password (Enter to keep current): ").strip()
+                if p:
+                    storage["password_b64"] = _encode_saved_password(p)
+                elif not storage.get("password_b64"):
+                    print(c("  Password is required.", C.RED)); time.sleep(1); continue
+                storage["save_credentials"] = True
+            elif ch == "7":
+                show_password = not show_password
+            elif ch == "8":
+                clear_saved_credentials(temp)
+            elif ch == "9":
                 return
 
     def modify_defaults():
@@ -449,7 +482,9 @@ def show_settings():
             print(f"  2) Skip existing        : {se}")
             print(f"  3) Default courses      : {c(temp['default_courses'], C.YELLOW)}")
             print(f"  4) Show all courses     : {ac}")
-            print(f"  5) Back")
+            tips = c("yes", C.GREEN) if temp.get("show_tips", True) else c("no", C.YELLOW)
+            print(f"  5) Show tips            : {tips}")
+            print(f"  6) Back")
             ch = input("\n  >> ").strip()
             if ch == "1":
                 p = input("  Enter path (Enter to keep): ").strip()
@@ -459,7 +494,8 @@ def show_settings():
                 nc = input("  Course IDs (comma-sep) or 'all': ").strip()
                 if nc: temp["default_courses"] = nc
             elif ch == "4": temp["default_show_all_courses"] = not temp.get("default_show_all_courses", False)
-            elif ch == "5": return
+            elif ch == "5": temp["show_tips"] = not temp.get("show_tips", True)
+            elif ch == "6": return
 
     def change_automation():
         steps = ("course_select", "download_path", "filters", "options")
@@ -518,6 +554,7 @@ def show_settings():
         print(f"    Skip existing    : {se}")
         print(f"    Courses          : {temp['default_courses']}")
         print(f"    Show all courses : {ac}")
+        print(f"    Show tips        : {'yes' if temp.get('show_tips', True) else 'no'}")
         print(f"\n  {c('Step automation:', C.YELLOW)}")
         for step in ("course_select", "download_path", "filters", "options"):
             status = c("AUTO", C.GREEN) if temp["auto"].get(step) else "ASK"
@@ -1320,9 +1357,10 @@ def main():
                     act = "" if co["active"] == "Active" else c(" (inactive)", C.DIM)
                     print(f"  {idx_s:<16} {co['code']:<12} {co.get('name','?'):<40} "
                           f"{co.get('season','?')}{act}")
-                toggle_label = "all" if not show_all_courses else "active only"
-                tip = c('Tip: type "toggle" to switch to ' + toggle_label + ' courses', C.DIM)
-                print(f"\n  {tip}")
+                if SETTINGS.get("show_tips", True):
+                    toggle_label = "all" if not show_all_courses else "active only"
+                    tip = c('Tip: type "toggle" to switch to ' + toggle_label + ' courses', C.DIM)
+                    print(f"\n  {tip}")
                 print()
 
                 while True:
@@ -1357,9 +1395,12 @@ def main():
                             act = "" if co["active"] == "Active" else c(" (inactive)", C.DIM)
                             print(f"  {idx_s:<16} {co['code']:<12} {co.get('name','?'):<40} "
                                   f"{co.get('season','?')}{act}")
-                        toggle_label = "all" if not show_all_courses else "active only"
-                        tip = c('Tip: type "toggle" for ' + toggle_label, C.DIM)
-                        print(f"\n  {tip}\n")
+                        if SETTINGS.get("show_tips", True):
+                            toggle_label = "all" if not show_all_courses else "active only"
+                            tip = c('Tip: type "toggle" for ' + toggle_label, C.DIM)
+                            print(f"\n  {tip}\n")
+                        else:
+                            print()
                         continue
 
                     if sel.lower() == "all":

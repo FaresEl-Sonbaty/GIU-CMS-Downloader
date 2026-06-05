@@ -34,6 +34,7 @@ It supports interactive prompts, course selection, active/all course listing, we
   - Default course selection.
   - Skip-existing preference.
   - Active/all course listing preference.
+  - Tip visibility.
   - Per-step automation.
   - Category folder names.
   - Optional saved credentials, disabled by default.
@@ -117,9 +118,11 @@ Type `--settings` at any prompt to open the settings panel. Changes are saved au
 - Change the default course selection.
 - Toggle skip-existing behavior.
 - Toggle active-course vs all-course listing.
+- Show or hide interactive tips.
 - Toggle auto-apply for each step individually.
 - Rename category folders.
-- Enable, update, or clear locally saved credentials.
+- Enable, update, show/hide, or clear locally saved credentials.
+- Update the saved password without retyping the username.
 - Switch between presets such as **Ask all**, **Skip all**, and **Factory default**.
 
 The settings file is created next to the script as `cms_downloader_settings.json`. Deleting it restores defaults.

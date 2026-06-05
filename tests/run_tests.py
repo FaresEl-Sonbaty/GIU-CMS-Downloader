@@ -69,6 +69,16 @@ def test_clear_saved_credentials_keeps_toggle_value() -> None:
     assert settings["credential_storage"]["password_b64"] == ""
 
 
+def test_password_mask_hides_saved_password() -> None:
+    assert cms_downloader._mask_password("short") == "******"
+    assert cms_downloader._mask_password("a-very-long-secret") == "************"
+    assert cms_downloader._mask_password("") == "(none)"
+
+
+def test_tips_are_on_by_default() -> None:
+    assert cms_downloader.FACTORY_SETTINGS["show_tips"] is True
+
+
 if __name__ == "__main__":
     test_safe_filename_removes_windows_reserved_characters()
     test_week_range_parser_matches_current_behavior()
@@ -78,4 +88,6 @@ if __name__ == "__main__":
     test_saved_password_round_trip_is_obfuscated()
     test_saved_credentials_are_off_by_default()
     test_clear_saved_credentials_keeps_toggle_value()
-    print("8 tests passed")
+    test_password_mask_hides_saved_password()
+    test_tips_are_on_by_default()
+    print("10 tests passed")
