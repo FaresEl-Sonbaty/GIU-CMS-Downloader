@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+cms_downloader_settings.json
+GIU_CMS_Downloads/
+downloads/
+*.log
+error_log*.txt
+manifest*.csv
+
