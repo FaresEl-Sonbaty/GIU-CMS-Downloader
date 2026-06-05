@@ -42,11 +42,40 @@ def test_format_size_outputs_readable_units() -> None:
     assert cms_downloader.fmt_size(2 * 1024 * 1024) == "2.0 MB"
 
 
+def test_saved_password_round_trip_is_obfuscated() -> None:
+    encoded = cms_downloader._encode_saved_password("secret-pass")
+    assert encoded != "secret-pass"
+    assert cms_downloader._decode_saved_password(encoded) == "secret-pass"
+
+
+def test_saved_credentials_are_off_by_default() -> None:
+    storage = cms_downloader.FACTORY_SETTINGS["credential_storage"]
+    assert storage["save_credentials"] is False
+    assert storage["username"] == ""
+    assert storage["password_b64"] == ""
+
+
+def test_clear_saved_credentials_keeps_toggle_value() -> None:
+    settings = {
+        "credential_storage": {
+            "save_credentials": True,
+            "username": "student",
+            "password_b64": cms_downloader._encode_saved_password("pw"),
+        }
+    }
+    cms_downloader.clear_saved_credentials(settings)
+    assert settings["credential_storage"]["save_credentials"] is True
+    assert settings["credential_storage"]["username"] == ""
+    assert settings["credential_storage"]["password_b64"] == ""
+
+
 if __name__ == "__main__":
     test_safe_filename_removes_windows_reserved_characters()
     test_week_range_parser_matches_current_behavior()
     test_category_filter_accepts_partial_names()
     test_categorize_uses_title_before_type_fallback()
     test_format_size_outputs_readable_units()
-    print("5 tests passed")
-
+    test_saved_password_round_trip_is_obfuscated()
+    test_saved_credentials_are_off_by_default()
+    test_clear_saved_credentials_keeps_toggle_value()
+    print("8 tests passed")

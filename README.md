@@ -1,7 +1,7 @@
 # GIU CMS Downloader
 
 A cross-platform terminal tool that downloads course files from the GIU CMS portal and organizes them into a clean course folder structure.  
-It supports interactive prompts, course selection, active/all course listing, week filters, category filters, dry runs, skip-existing downloads, session-only credentials, manifests, error logs, and command-line one-shot mode.
+It supports interactive prompts, course selection, active/all course listing, week filters, category filters, dry runs, skip-existing downloads, optional saved credentials, manifests, error logs, and command-line one-shot mode.
 
 ## Features
 
@@ -36,7 +36,10 @@ It supports interactive prompts, course selection, active/all course listing, we
   - Active/all course listing preference.
   - Per-step automation.
   - Category folder names.
-- Session-only credentials: username/password are not committed or saved in the settings file.
+  - Optional saved credentials, disabled by default.
+- Session-only credentials by default.
+- Optional local credential saving from `--settings` for click-to-launch sign-in.
+- Saved passwords are base64-obfuscated in the local settings file, not encrypted.
 - Download manifest and error log output after real runs.
 - Lightweight non-network tests for parsing, categorization, filename cleaning, and size formatting.
 
@@ -116,11 +119,12 @@ Type `--settings` at any prompt to open the settings panel. Changes are saved au
 - Toggle active-course vs all-course listing.
 - Toggle auto-apply for each step individually.
 - Rename category folders.
+- Enable, update, or clear locally saved credentials.
 - Switch between presets such as **Ask all**, **Skip all**, and **Factory default**.
 
 The settings file is created next to the script as `cms_downloader_settings.json`. Deleting it restores defaults.
 
-Credentials are session-only. The settings file stores workflow preferences, not your CMS password.
+Credential saving is off by default. If enabled, the settings file stores your username and a base64-obfuscated password so the script can sign in automatically next time. This is convenient, but it is not encryption; only enable it on a personal machine you trust.
 
 ## Examples
 

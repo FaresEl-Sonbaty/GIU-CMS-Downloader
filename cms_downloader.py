@@ -15,7 +15,8 @@ Usage:
     python cms_downloader.py 2576 --weeks 1-5         Weeks 1 through 5 only
     python cms_downloader.py 2576 --only lectures     Lectures category only
 
-First run will ask for credentials (saved for future runs).
+First run will ask for credentials. Saving credentials locally is optional
+and off by default; enable it from --settings if you want click-to-launch sign-in.
 Commands inside interactive mode must be prefixed with "--".
 Type --help for a quick command list, or --help-full for the immersive guide.
 """
@@ -31,6 +32,7 @@ import subprocess
 import time
 import csv
 import traceback
+import getpass
 from datetime import datetime, date
 
 # Force UTF-8 output on Windows
@@ -231,10 +233,16 @@ FACTORY_SETTINGS = {
         "sheet": "Sheets", "notes": "Notes", "other": "Other"
     },
     "preset": "factory_default",
-    "last_run": None
+    "last_run": None,
+    "credential_storage": {
+        "save_credentials": False,
+        "username": "",
+        "password_b64": ""
+    }
 }
 
-# Session-only credentials (never saved to disk)
+# Session credentials are always loaded into memory first. Saving them to disk
+# is opt-in from settings and disabled by default.
 SESSION_CREDS = {"username": "", "password": ""}
 
 PRESETS = {
@@ -286,6 +294,48 @@ def save_settings():
     except Exception:
         pass
 
+def _encode_saved_password(password):
+    if not password:
+        return ""
+    return base64.b64encode(password.encode("utf-8")).decode("ascii")
+
+def _decode_saved_password(encoded):
+    if not encoded:
+        return ""
+    try:
+        return base64.b64decode(encoded.encode("ascii")).decode("utf-8")
+    except Exception:
+        return ""
+
+def saved_credentials_enabled():
+    return bool(SETTINGS.get("credential_storage", {}).get("save_credentials"))
+
+def load_saved_credentials():
+    storage = SETTINGS.get("credential_storage", {})
+    if not storage.get("save_credentials"):
+        return False
+    username = storage.get("username", "")
+    password = _decode_saved_password(storage.get("password_b64", ""))
+    if not username or not password:
+        return False
+    SESSION_CREDS["username"] = username
+    SESSION_CREDS["password"] = password
+    return True
+
+def save_current_credentials():
+    storage = SETTINGS.setdefault("credential_storage", _deep_copy(FACTORY_SETTINGS["credential_storage"]))
+    if not storage.get("save_credentials"):
+        return
+    storage["username"] = SESSION_CREDS["username"]
+    storage["password_b64"] = _encode_saved_password(SESSION_CREDS["password"])
+    save_settings()
+
+def clear_saved_credentials(settings_target=None):
+    target = settings_target if settings_target is not None else SETTINGS
+    storage = target.setdefault("credential_storage", _deep_copy(FACTORY_SETTINGS["credential_storage"]))
+    storage["username"] = ""
+    storage["password_b64"] = ""
+
 def get_password():
     return SESSION_CREDS["password"]
 
@@ -295,20 +345,26 @@ def get_username():
 def has_credentials():
     return bool(SESSION_CREDS["username"]) and bool(SESSION_CREDS["password"])
 
-def sign_in(username=None, password=None):
-    """Prompt for credentials (session-only, never saved to disk).
-    Returns True if connection test passes."""
+def sign_in(username=None, password=None, source="prompt"):
+    """Prompt for credentials or use supplied/saved credentials.
+    Saving credentials is opt-in and disabled by default."""
     if username and password:
         SESSION_CREDS["username"] = username
         SESSION_CREDS["password"] = password
     else:
         print(c("\n  Sign in to GIU CMS", C.BOLD + C.CYAN))
-        print(c("  (credentials are used for this session only)\n", C.DIM))
+        if saved_credentials_enabled():
+            print(c("  (saved credentials are enabled in settings)\n", C.DIM))
+        else:
+            print(c("  (credentials are used for this session only)\n", C.DIM))
         u = input("  Username: ").strip()
         if not u:
             print(c("  Username is required.", C.RED))
             return False
-        p = input("  Password: ").strip()
+        try:
+            p = getpass.getpass("  Password: ").strip()
+        except Exception:
+            p = input("  Password: ").strip()
         if not p:
             print(c("  Password is required.", C.RED))
             return False
@@ -319,6 +375,9 @@ def sign_in(username=None, password=None):
     ok, msg = test_connection()
     if ok:
         print(c(f" {msg}", C.GREEN))
+        save_current_credentials()
+        if source == "saved":
+            print(c("  Signed in using saved credentials.", C.DIM))
         return True
     else:
         print(c(f" {msg}", C.RED))
@@ -338,7 +397,46 @@ def show_settings():
     def save_temp():
         SETTINGS.clear(); SETTINGS.update(temp); save_settings()
 
-    # No modify_credentials — creds are session-only, never saved
+    def manage_credentials():
+        storage = temp.setdefault("credential_storage", _deep_copy(FACTORY_SETTINGS["credential_storage"]))
+        while True:
+            clear_screen()
+            print(c("  Credential Storage\n", C.CYAN))
+            enabled = c("ON", C.GREEN) if storage.get("save_credentials") else c("OFF", C.YELLOW)
+            username = storage.get("username") or "(none)"
+            saved = c("yes", C.GREEN) if storage.get("username") and storage.get("password_b64") else c("no", C.YELLOW)
+            print(f"  1) Save credentials locally : {enabled}")
+            print(f"  2) Saved username           : {c(username, C.YELLOW)}")
+            print(f"  3) Saved password present   : {saved}")
+            print("  4) Update saved credentials")
+            print("  5) Clear saved credentials")
+            print("  6) Back")
+            print(c("\n  Note: saved credentials are base64-obfuscated, not encrypted.", C.DIM))
+            ch = input("\n  >> ").strip()
+            if ch == "1":
+                storage["save_credentials"] = not storage.get("save_credentials", False)
+                if not storage["save_credentials"]:
+                    clear_saved_credentials(temp)
+            elif ch == "2":
+                u = input("  Username (Enter to keep): ").strip()
+                if u: storage["username"] = u
+            elif ch == "4":
+                u = input("  Username: ").strip()
+                if not u:
+                    print(c("  Username is required.", C.RED)); time.sleep(1); continue
+                try:
+                    p = getpass.getpass("  Password: ").strip()
+                except Exception:
+                    p = input("  Password: ").strip()
+                if not p:
+                    print(c("  Password is required.", C.RED)); time.sleep(1); continue
+                storage["save_credentials"] = True
+                storage["username"] = u
+                storage["password_b64"] = _encode_saved_password(p)
+            elif ch == "5":
+                clear_saved_credentials(temp)
+            elif ch == "6":
+                return
 
     def modify_defaults():
         while True:
@@ -413,6 +511,8 @@ def show_settings():
         print("=" * 60)
         se = "yes" if temp["default_skip_existing"] else "no"
         ac = "yes" if temp.get("default_show_all_courses") else "no"
+        cred_storage = temp.setdefault("credential_storage", _deep_copy(FACTORY_SETTINGS["credential_storage"]))
+        cred_status = "saved" if cred_storage.get("save_credentials") and cred_storage.get("username") and cred_storage.get("password_b64") else "session-only"
         print(f"\n  {c('Defaults:', C.YELLOW)}")
         print(f"    Download path    : {temp['default_download_path']}")
         print(f"    Skip existing    : {se}")
@@ -423,12 +523,12 @@ def show_settings():
             status = c("AUTO", C.GREEN) if temp["auto"].get(step) else "ASK"
             print(f"    {step:<20} : {status}")
         print(f"\n  Active preset: {c(temp.get('preset', 'custom'), C.MAGENTA)}")
-        print(c("\n  Credentials: session-only (never saved)", C.DIM))
+        print(f"\n  Credentials: {c(cred_status, C.DIM)}")
         print(f"\n  {c('Options:', C.YELLOW)}")
         print("    1) Modify defaults")
         print("    2) Change step automation"); print("    3) Customize category folder names")
-        print("    4) Switch preset"); print("    5) Restore factory defaults")
-        print("    6) Save and exit"); print()
+        print("    4) Switch preset"); print("    5) Manage credential storage")
+        print("    6) Restore factory defaults"); print("    7) Save and exit"); print()
         try: choice = input("  >> ").strip()
         except (EOFError, KeyboardInterrupt): raise CommandAction("exit")
         if choice.startswith("--"):
@@ -449,16 +549,17 @@ def show_settings():
             elif choice == "2": change_automation()
             elif choice == "3": customize_categories()
             elif choice == "4": switch_preset()
-            elif choice == "5":
+            elif choice == "5": manage_credentials()
+            elif choice == "6":
                 a = input("  Restore factory defaults? (y/n): ").strip().lower()
                 if a == "y": temp.clear(); temp.update(_deep_copy(FACTORY_SETTINGS))
-            elif choice == "6": save_temp(); clear_screen(); return
+            elif choice == "7": save_temp(); clear_screen(); return
         except CommandAction: raise
         except Exception as e:
             print(c(f"  Error in settings: {e}", C.RED))
         clear_screen()
 
-# (first_run_setup removed — credentials are now session-only via sign_in)
+# (first_run_setup removed — credentials are handled through sign_in/settings)
 
 # ══════════════════════════════════════════════════════════════════════
 #  CMS ENGINE
@@ -1044,14 +1145,32 @@ def main():
     parser.add_argument("--only", help="Category filter (e.g. 'lectures,pa')")
     args = parser.parse_args()
 
-    # ── Sign in (session-only, never saved) ──────────────────────
+    # ── Sign in ─────────────────────────────────────────────────
     if args.user and args.password:
         # CLI mode with credentials provided
-        if not sign_in(args.user, args.password):
+        if not sign_in(args.user, args.password, source="cli"):
             if not args.no_pause:
                 try: input("\n  Press Enter to exit...")
                 except: pass
             sys.exit(1)
+    elif load_saved_credentials():
+        if not sign_in(get_username(), get_password(), source="saved"):
+            print(c("  Saved credentials failed. Please sign in again.", C.YELLOW))
+            clear_saved_credentials()
+            save_settings()
+            max_attempts = 3
+            for attempt in range(max_attempts):
+                if sign_in():
+                    break
+                remaining = max_attempts - attempt - 1
+                if remaining > 0:
+                    print(c(f"  {remaining} attempt(s) remaining.\n", C.YELLOW))
+                else:
+                    print(c("  Max attempts reached.", C.RED))
+                    if not args.no_pause:
+                        try: input("\n  Press Enter to exit...")
+                        except: pass
+                    sys.exit(1)
     else:
         # Interactive sign-in
         max_attempts = 3
