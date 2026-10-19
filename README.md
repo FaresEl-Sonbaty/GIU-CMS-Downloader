@@ -42,22 +42,39 @@ It supports interactive prompts, course selection, active/all course listing, we
 - Optional local credential saving from `--settings` for click-to-launch sign-in.
 - Saved passwords are base64-obfuscated in the local settings file, not encrypted.
 - Download manifest and error log output after real runs.
-- Lightweight non-network tests for parsing, categorization, filename cleaning, and size formatting.
+- Offline regression tests for parsing, credential prompts, authentication errors, and interrupted downloads.
+- Visible `*` feedback for password typing in Windows consoles, including backspace.
+- Downloads are staged in `.part` files and published only after a complete, nonempty HTTP 200 response.
 
 ## Installation
 
-  1. Ensure Python 3.10+ is installed.
-  2. Ensure `curl` is available from the terminal.
-  3. Download `cms_downloader.py` (or clone the repository).
-  4. Place it anywhere you like.
+1. Install Python 3.10 or newer (verified with Python 3.11 and 3.14 on Windows).
+2. Clone this repository or download and extract its ZIP.
+3. Open a terminal in the repository folder and install the dependencies:
 
-No Python package installation is required.
+```bash
+python -m pip install -r requirements.txt
+python cms_downloader.py
+```
+
+The downloader uses `requests` and `requests-ntlm` for CMS authentication and downloads. **curl is no longer required.** Keep `requirements.txt` with the script when sharing the project.
+
+If you download only the script, install its dependencies with:
+
+```bash
+python -m pip install requests requests-ntlm
+```
+
+Use the **same Python installation** to install packages and run the downloader. Bare `pip` can point to a different installation. For Windows users who double-click `.py` files, see [Troubleshooting](#troubleshooting) if the file association uses a different Python version.
+
+See [CHANGELOG.md](CHANGELOG.md) for the login and download reliability update.
 
 ## Quick test
 
 Run the lightweight test script from the repository root:
 
     python tests/run_tests.py
+    python -m unittest discover -s tests -p "test_*.py"
 
 The tests do not contact GIU CMS and do not require credentials.
 
@@ -68,7 +85,7 @@ Double-click the script, or run:
 ```bash
 python cms_downloader.py
 ```
-Follow the prompts. At any prompt you can type a command, for example `--help`.
+Follow the prompts. At workflow prompts you can type a command, for example `--help`. Password prompts treat input as a password. Windows consoles display `*` while you type; other terminals normally hide password input. Press Enter to submit.
 
 ### Command-line one-shot mode
 Download specific courses:
@@ -155,6 +172,41 @@ python cms_downloader.py all --no-pause
 **List all visible courses**
 ```bash
 python cms_downloader.py --list-courses --all
+```
+
+## Troubleshooting
+
+### Missing login library even after installing it
+
+There may be multiple Python installations. The downloader checks dependencies before asking for credentials and prints the path of the interpreter that needs the packages. In PowerShell, use that exact path with the `&` call operator:
+
+```powershell
+& "C:\path\to\python.exe" -m pip install requests requests-ntlm
+& "C:\path\to\python.exe" "C:\path\to\cms_downloader.py"
+```
+
+Replace both example paths with the actual paths on your computer. Installing packages into Python 3.11 does not install them into Python 3.14. Close and reopen the downloader after installing dependencies.
+
+### Password changed or saved credentials fail
+
+Enter the new username and password when prompted. Successful sign-in updates the saved credentials if local credential saving is enabled. You can also use `--settings` > Manage credential storage to update them. Passwords retain leading and trailing spaces exactly as typed.
+
+### Old curl/NTLM error or blank “Unexpected HTTP” message
+
+These messages came from the previous curl transport. Replace the old script with the latest version and install the dependencies above. Both login and downloads now use Python NTLM authentication and read HTTP status codes directly.
+
+### Authentication, connection, or certificate errors
+
+HTTP 401/403 indicates that authentication or access was rejected. Check that the same credentials work in the university portal. Timeouts and connection errors are reported separately. Certificate verification is enabled; for certificate errors, check your computer's date and the CMS certificate. Redirects are not followed automatically; an HTTP 3xx response is reported rather than treated as a successful login.
+
+## Development checks
+
+The tests use synthetic credentials and mocked HTTP responses; they do not access GIU CMS or read your settings file.
+
+```bash
+python tests/run_tests.py
+python -m unittest discover -s tests -p "test_*.py"
+python cms_downloader.py --help
 ```
 
 ## Notes

@@ -9,3 +9,7 @@ downloads/
 error_log*.txt
 manifest*.csv
 
+
+# Incomplete downloads and local script backups
+*.part
+*.bak

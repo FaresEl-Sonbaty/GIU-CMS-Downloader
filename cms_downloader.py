@@ -28,7 +28,6 @@ import json
 import base64
 import argparse
 import platform
-import subprocess
 import time
 import csv
 import traceback
@@ -351,6 +350,38 @@ def get_username():
 def has_credentials():
     return bool(SESSION_CREDS["username"]) and bool(SESSION_CREDS["password"])
 
+def prompt_password(prompt="  Password: "):
+    """Read a password with masked feedback in a Windows console."""
+    if os.name == "nt" and sys.stdin.isatty():
+        import msvcrt
+        print(prompt, end="", flush=True)
+        characters = []
+        while True:
+            char = msvcrt.getwch()
+            if char in ("\r", "\n"):
+                print()
+                return "".join(characters)
+            if char == "\x03":
+                print()
+                raise KeyboardInterrupt
+            if char == "\x1a":
+                print()
+                raise EOFError
+            if char in ("\x00", "\xe0"):
+                msvcrt.getwch()  # Consume the second part of special keys.
+                continue
+            if char in ("\b", "\x7f"):
+                if characters:
+                    characters.pop()
+                    print("\b \b", end="", flush=True)
+            elif char.isprintable():
+                characters.append(char)
+                print("*", end="", flush=True)
+    else:
+        print("  Password input is hidden; type your password and press Enter.")
+        return getpass.getpass(prompt)
+
+
 def sign_in(username=None, password=None, source="prompt"):
     """Prompt for credentials or use supplied/saved credentials.
     Saving credentials is opt-in and disabled by default."""
@@ -367,10 +398,7 @@ def sign_in(username=None, password=None, source="prompt"):
         if not u:
             print(c("  Username is required.", C.RED))
             return False
-        try:
-            p = getpass.getpass("  Password: ").strip()
-        except Exception:
-            p = input("  Password: ").strip()
+        p = prompt_password("  Password: ")
         if not p:
             print(c("  Password is required.", C.RED))
             return False
@@ -439,10 +467,7 @@ def show_settings():
                     if not u:
                         print(c("  Username is required before saving a password.", C.RED)); time.sleep(1); continue
                     storage["username"] = u
-                try:
-                    p = getpass.getpass("  Password: ").strip()
-                except Exception:
-                    p = input("  Password: ").strip()
+                p = prompt_password("  Password: ")
                 if not p:
                     print(c("  Password is required.", C.RED)); time.sleep(1); continue
                 storage["save_credentials"] = True
@@ -455,10 +480,7 @@ def show_settings():
                     storage["username"] = u
                 elif not current_user:
                     print(c("  Username is required.", C.RED)); time.sleep(1); continue
-                try:
-                    p = getpass.getpass("  Password (Enter to keep current): ").strip()
-                except Exception:
-                    p = input("  Password (Enter to keep current): ").strip()
+                p = prompt_password("  Password (Enter to keep current): ")
                 if p:
                     storage["password_b64"] = _encode_saved_password(p)
                 elif not storage.get("password_b64"):
@@ -611,73 +633,63 @@ def log_error(context, message, detail=""):
         "context": context, "message": message, "detail": detail
     })
 
-def _curl(url, output_file=None, timeout=60, retries=3):
-    """Run curl with NTLM auth. Returns (http_code, content_or_path).
-    Retries on connection failure (HTTP 000)."""
-    username = get_username()
-    password = get_password()
+def _request(url, output_file=None, timeout=60, retries=3):
+    """Fetch CMS content using Python NTLM support, independently of curl."""
+    username, password = get_username(), get_password()
     if not username or not password:
         return ("NO_CREDS", "")
+    try:
+        import requests
+        from requests_ntlm import HttpNtlmAuth
+    except ImportError:
+        return ("ERROR", "Missing login library. Install it with: "
+                f'"{sys.executable}" -m pip install requests requests-ntlm')
 
-    cmd = ["curl.exe", "-k", "--ntlm", "-u", f"{username}:{password}",
-           "--silent", "--show-error", "--retry", "2", "--retry-delay", "1"]
-    if output_file:
-        cmd += ["-o", output_file, "-w", "%{http_code}", url]
-    else:
-        cmd += ["-w", "\n%{http_code}", url]
-
-    last_err = ""
     for attempt in range(retries):
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-            output = result.stdout
-            stderr = result.stderr.strip()
+            with requests.Session() as session:
+                session.auth = HttpNtlmAuth(username, password)
+                # Do not forward authentication to a redirected host.
+                with session.get(url, timeout=timeout, stream=bool(output_file),
+                                 allow_redirects=False) as response:
+                    code = str(response.status_code)
+                    if output_file:
+                        if code != "200":
+                            return (code, "")
+                        # Publish only complete downloads; preserve an existing file on failure.
+                        partial = os.fspath(output_file) + ".part"
+                        try:
+                            with open(partial, "wb") as target:
+                                for chunk in response.iter_content(chunk_size=65536):
+                                    if chunk:
+                                        target.write(chunk)
+                            if os.path.getsize(partial) == 0:
+                                raise OSError("Server returned an empty file")
+                            os.replace(partial, output_file)
+                        finally:
+                            if os.path.exists(partial):
+                                os.remove(partial)
+                        return (code, output_file)
+                    return (code, response.text)
+        except requests.exceptions.SSLError:
+            return ("ERROR", "CMS certificate verification failed. Check the server certificate and your computer's date.")
+        except requests.exceptions.Timeout:
+            error_code, message = "TIMEOUT", f"Timeout after {timeout}s"
+        except requests.exceptions.RequestException as exc:
+            error_code, message = "CONN_ERROR", str(exc).replace(password, "[redacted]")
+        except Exception as exc:
+            error_code, message = "ERROR", str(exc).replace(password, "[redacted]")
+        if attempt < retries - 1:
+            time.sleep(1 + attempt)
+        else:
+            log_error("request", message, f"URL: {url}")
+            return (error_code, message)
+    return ("CONN_ERROR", "No request attempts configured.")
 
-            if output_file:
-                code = output.strip().split("\n")[-1] if output.strip() else "000"
-            else:
-                lines = output.rsplit("\n", 1)
-                content = lines[0] if len(lines) > 1 else ""
-                code = lines[-1].strip() if lines else "000"
-
-            if code == "000" and attempt < retries - 1:
-                last_err = stderr
-                time.sleep(1 + attempt)
-                continue
-
-            if code == "000":
-                msg = stderr or "Connection failed (no response)"
-                log_error("curl", f"HTTP 000 after {retries} attempts", f"URL: {url}, Error: {msg}")
-                return ("CONN_ERROR", msg)
-
-            if output_file:
-                return (code, output_file)
-            else:
-                return (code, content)
-
-        except subprocess.TimeoutExpired:
-            last_err = f"Timeout after {timeout}s"
-            if attempt < retries - 1:
-                time.sleep(1)
-                continue
-            log_error("curl", "Timeout", f"URL: {url}")
-            return ("TIMEOUT", "")
-        except FileNotFoundError:
-            log_error("curl", "curl.exe not found", "Ensure curl is installed and in PATH")
-            return ("CURL_NOT_FOUND", "")
-        except Exception as e:
-            log_error("curl", f"Unexpected error: {e}", traceback.format_exc())
-            if attempt < retries - 1:
-                time.sleep(1)
-                continue
-            return ("ERROR", str(e))
-
-    return ("CONN_ERROR", last_err)
 
 def test_connection():
-    code, detail = _curl(f"{BASE_URL}/apps/student/HomePageStn.aspx")
+    code, detail = _request(f"{BASE_URL}/apps/student/HomePageStn.aspx")
     if code == "NO_CREDS": return (False, "No credentials configured. Run --settings.")
-    if code == "CURL_NOT_FOUND": return (False, "curl.exe not found.")
     if code in ("TIMEOUT", "CONN_ERROR", "ERROR"):
         return (False, f"Connection failed: {detail}")
     if code == "200": return (True, "Connected successfully!")
@@ -691,7 +703,7 @@ def fetch_courses(show_all=False):
     else:
         page = f"{BASE_URL}/apps/student/HomePageStn.aspx"
 
-    code, html = _curl(page)
+    code, html = _request(page)
     if code != "200":
         log_error("fetch_courses", f"Failed to fetch course list (HTTP {code})")
         return None, f"Failed (HTTP {code})"
@@ -853,7 +865,7 @@ def download_course(course, download_root, skip_existing, cats,
     os.makedirs(course_folder, exist_ok=True)
 
     url = f"{BASE_URL}/apps/student/CourseViewStn.aspx?id={course['id']}&sid={course['sid']}"
-    code, html = _curl(url)
+    code, html = _request(url)
     if code != "200":
         msg = f"Could not fetch course page (HTTP {code})"
         log_error(course["code"], msg, url)
@@ -941,28 +953,17 @@ def download_course(course, download_root, skip_existing, cats,
         dl_retries = 3
         for attempt in range(dl_retries):
             try:
-                dl_cmd = ["curl.exe", "-k", "--ntlm", "-u",
-                          f"{get_username()}:{get_password()}", "--silent",
-                          "--show-error", "-o", fpath, full_url]
-                result = subprocess.run(dl_cmd, capture_output=True, text=True, timeout=120)
-                if os.path.exists(fpath) and os.path.getsize(fpath) > 0:
+                code, detail = _request(full_url, output_file=fpath, timeout=120, retries=1)
+                if code == "200" and os.path.exists(fpath) and os.path.getsize(fpath) > 0:
                     dl_ok = True
                     break
-                else:
-                    stderr = result.stderr.strip()
-                    if attempt < dl_retries - 1:
-                        time.sleep(1)
-                    else:
-                        err_msg = f"Download failed: {stderr or 'empty file'}"
-                        errors.append(err_msg)
-                        log_error(course["code"], err_msg, f"File: {item['title']}, URL: {full_url}")
-            except subprocess.TimeoutExpired:
                 if attempt < dl_retries - 1:
                     time.sleep(1)
                 else:
-                    err_msg = "Download timed out"
+                    reason = detail if code in ("ERROR", "CONN_ERROR", "TIMEOUT") else f"HTTP {code} or empty file"
+                    err_msg = f"Download failed: {reason}"
                     errors.append(err_msg)
-                    log_error(course["code"], err_msg, f"File: {item['title']}")
+                    log_error(course["code"], err_msg, f"File: {item['title']}, URL: {full_url}")
             except Exception as e:
                 err_msg = f"Download error: {e}"
                 errors.append(err_msg)
@@ -981,10 +982,6 @@ def download_course(course, download_root, skip_existing, cats,
         else:
             print(c("  FAILED", C.RED))
             failed += 1
-            # Clean up partial file
-            if os.path.exists(fpath):
-                try: os.remove(fpath)
-                except OSError: pass
             file_manifest.append({"course": course["code"], "week": item["week"],
                 "week_num": item["week_num"], "title": item["title"], "type": item["type"],
                 "category": cat, "filename": fname, "status": "failed", "size": 0})
@@ -1181,6 +1178,20 @@ def main():
     parser.add_argument("--weeks", help="Week range filter (e.g. '1-5', '3+', '7')")
     parser.add_argument("--only", help="Category filter (e.g. 'lectures,pa')")
     args = parser.parse_args()
+
+    # Check the actual running interpreter before asking for credentials.
+    try:
+        import requests
+        from requests_ntlm import HttpNtlmAuth
+    except ImportError:
+        print(c("  Missing login libraries for this Python installation.", C.RED))
+        print(f"  Python: {sys.executable}")
+        print("  In PowerShell, run:")
+        print(f'  & "{sys.executable}" -m pip install requests requests-ntlm')
+        if not args.no_pause:
+            try: input("\n  Press Enter to exit...")
+            except (EOFError, KeyboardInterrupt): pass
+        return
 
     # ── Sign in ─────────────────────────────────────────────────
     if args.user and args.password:
