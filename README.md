@@ -87,6 +87,16 @@ python cms_downloader.py
 ```
 Follow the prompts. At workflow prompts you can type a command, for example `--help`. Password prompts treat input as a password. Windows consoles display `*` while you type; other terminals normally hide password input. Press Enter to submit.
 
+### Selecting courses interactively
+
+Use the numbers in the displayed course list, with inclusive ranges and comma or space separators:
+
+- `1-6` selects courses 1 through 6.
+- `1-3, 5, 7-9` selects courses 1, 2, 3, 5, 7, 8, and 9.
+- Individual numbers, course IDs, and course codes still work and can be mixed with ranges.
+
+Ranges refer to displayed list positions. Overlapping selections are included once. Reversed or out-of-bounds ranges are rejected so you can correct the selection.
+
 ### Command-line one-shot mode
 Download specific courses:
 ```bash

@@ -1113,6 +1113,38 @@ def parse_week_range(text, total_weeks):
 
     return None
 
+def parse_course_selection(text, courses):
+    """Resolve displayed numbers, inclusive number ranges, IDs, and codes."""
+    if text.strip().lower() == "all":
+        return courses[:]
+    # Allow spaces around a range's hyphen as well as between selections.
+    text = re.sub(r"(?<=\d)\s*-\s*(?=\d)", "-", text)
+    selected = []
+    for part in re.split(r"[,\s]+", text.strip()):
+        if not part:
+            continue
+        match = re.fullmatch(r"(\d+)-(\d+)", part)
+        if match:
+            first, last = map(int, match.groups())
+            if not 1 <= first <= last <= len(courses):
+                raise ValueError(f"Invalid course range '{part}'. Use numbers from 1 to {len(courses)} in ascending order.")
+            matches = courses[first - 1:last]
+        else:
+            found = None
+            if part.isdigit() and 1 <= int(part) <= len(courses):
+                found = courses[int(part) - 1]
+            if found is None:
+                found = next((course for course in courses
+                              if course["id"] == part or course["code"].lower() == part.lower()), None)
+            if found is None:
+                raise ValueError(f"'{part}' not recognized.")
+            matches = [found]
+        for course in matches:
+            if course not in selected:
+                selected.append(course)
+    return selected
+
+
 def parse_category_filter(text, cats):
     """Parse category filter string. Returns set of lowercase category names or None.
     Matches partial names case-insensitively."""
@@ -1377,7 +1409,7 @@ def main():
                 while True:
                     try:
                         sel = get_input(prompt_text(
-                            "Select courses (#s, IDs, codes, 'all', or 'toggle')",
+                            "Select courses (#s/ranges e.g. 1-3, 5, 7-9; IDs, codes, 'all', or 'toggle')",
                             f"default: {default_c}")).strip()
                     except CommandAction as e:
                         if e.command == "back":
@@ -1417,23 +1449,14 @@ def main():
                     if sel.lower() == "all":
                         selected = enrolled[:]; break
 
-                    parts = re.split(r'[,\s]+', sel)
-                    selected = []; ok_sel = True
-                    for part in parts:
-                        part = part.strip()
-                        if not part: continue
-                        found = None
-                        if part.isdigit() and 1 <= int(part) <= len(enrolled):
-                            found = enrolled[int(part)-1]
-                        if not found:
-                            found = next((co for co in enrolled
-                                          if co["id"] == part or co["code"].lower() == part.lower()), None)
-                        if found:
-                            if found not in selected: selected.append(found)
-                        else:
-                            print(c(f"  '{part}' not recognized.", C.RED)); ok_sel = False; break
-                    if ok_sel and selected: break
-                    if not selected: print(c("  No courses selected.", C.RED))
+                    try:
+                        selected = parse_course_selection(sel, enrolled)
+                    except ValueError as exc:
+                        print(c(f"  {exc}", C.RED))
+                        continue
+                    if selected:
+                        break
+                    print(c("  No courses selected.", C.RED))
 
                 codes = ", ".join(co["code"] for co in selected)
                 print(f"  {c('Selected:', C.GREEN)} {codes}\n")

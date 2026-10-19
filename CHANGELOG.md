@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-19 — Course selection ranges
+
+- Interactive course selection accepts inclusive list-number ranges such as `1-6` and mixed selections such as `1-3, 5, 7-9`.
+- Spaces around hyphens are accepted. Overlapping ranges and individual selections are deduplicated in selection order.
+- Existing individual numbers, IDs, and course codes remain supported. Invalid, reversed, and out-of-bounds ranges prompt for correction.
+- Added offline tests for ranges and existing selection formats.
+
 ## 2026-10-19 — Password entry and CMS connection fixes
 
 ### Fixed
